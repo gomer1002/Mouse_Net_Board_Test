@@ -230,10 +230,10 @@ void setup()
   delay(100);
   digitalWrite(SIM_PWRK, LOW);
   digitalWrite(LED_PC13, HIGH);
-  delay(1000);
+  delay(500);
   digitalWrite(SIM_PWRK, HIGH);
   digitalWrite(LED_PC13, LOW);
-  delay(3000);
+  delay(2000);
 
   display.setCursor(xpos, ypos);
   display.fillRect(xpos, ypos, 128, ypos + 8, SSD1306_BLACK);
@@ -286,7 +286,7 @@ void setup()
   else
   {
     MySerial1.println(bmp.sensorID());
-    display.println(bmp.sensorID());
+    display.println("OK");
     display.display();
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
                     Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
@@ -298,10 +298,22 @@ void setup()
   // ===============================================
   // W25Q128 / W25Q32
   // auto detect W25Q128 or W25Q32 by probing sectors
+  MySerial1.write("\n\nChecking W25Q32 ...\n");
+  // flash.begin();
+  display.print("W25Q32: ");
+  // uint8_t b1, b2, b3;
+  // uint32_t JEDEC = flash.getJEDECID();
+  // // uint16_t ManID = flash.getManID();
+  // b1 = (JEDEC >> 16);
+  // b2 = (JEDEC >> 8);
+  // b3 = (JEDEC >> 0);
+  display.printf("TODO");
+  // display.printf("W25Q32: %02xh|%02xh|%02xh", b1, b2, b3);
+  MySerial1.printf("W25Q32: need to be implemented\n");
+  // MySerial1.printf("Manufacturer ID: %02xh\nMemory Type: %02xh\nCapacity: %02xh", b1, b2, b3);
 
   // AT24C256
   // display.print("AT24C256: ");
-  // MySerial1.write("\n\nChecking AT24C256 ...\n");
   // display.display();
   // info_blink(LED_PC13, 1);
   // delay(100);
