@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <array>
 #include <HardwareSerial.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -88,9 +89,14 @@ uint8_t switchesState[switchesSize] = {0};
 
 int bmp_delay = 500;
 int bmpTimer = millis();
+bool bmpStarted = false;
 float temperature;
 float pressure;
 float altitude;
+
+int gps_delay = 800;
+int gpsTimer = millis();
+bool gpsStarted = false;
 
 void setup();
 int checkBtns();
@@ -139,6 +145,97 @@ String io_state()
   return s;
 }
 
+std::array<String, 2> parse_UTS_date_time(String UTS_date_time, int offset = 0)
+{
+  int year, month, day, hour, minute, second;
+  year = UTS_date_time.substring(0, 4).toInt();
+  month = UTS_date_time.substring(4, 6).toInt();
+  day = UTS_date_time.substring(6, 8).toInt();
+  hour = UTS_date_time.substring(8, 10).toInt();
+  minute = UTS_date_time.substring(10, 12).toInt();
+  second = UTS_date_time.substring(12, 14).toInt();
+
+  char date[11]; // Массив для строки DD.MM.YYYY (10 символов + '\0')
+  sprintf(date, "%02d.%02d.%04d", day, month, year);
+
+  char time[9]; // Массив для строки DD.MM.YYYY (10 символов + '\0')
+  sprintf(time, "%02d:%02d:%02d", hour, minute, second);
+
+  return {date, time};
+}
+
+std::array<String, 21> parse_CGNSINF(String CGNSINF, bool &parse_ok)
+{
+  std::array<String, 21> values = {}; // Инициализация пустого массива
+  for (int i = 0; i < 21; i++)
+  {
+    values[i] = "";
+  }
+
+  // trimming off the prefix
+  CGNSINF = CGNSINF.substring(CGNSINF.indexOf(' ', 0) + 1, CGNSINF.length());
+
+  // counting commas
+  int commas = 0;
+  for (int i = 0; i < CGNSINF.length(); i++)
+  {
+    if (CGNSINF.charAt(i) == ',')
+      commas++;
+  }
+  // MySerial1.println("CGNSINF = " + CGNSINF);
+  // MySerial1.println("commas = " + String(commas));
+  // MySerial1.println("length = " + String(CGNSINF.length()));
+  // MySerial1.println("");
+  if (commas != 20)
+    return values;
+
+  // +UGNSINF: 1,0,19800106002005.462,,,,0.00,0.0,0,,,,,,0,0,0,,,,
+
+  // +UGNSINF: 1,0,20250524084650.300,,,,0.00,0.0,0,,,,,,3,0,,,29,,
+  // +UGNSINF: 1,0,20250524084653.304,,,,3.06,283.3,0,,,,,,3,0,,,29,
+  // +UGNSINF: 1,1,20250524085106.000,56.452375,84.961512,157.071,0.
+  int idx = 0;
+  int i = 0;
+  String value;
+  do
+  {
+    int start = CGNSINF.indexOf(',', idx);
+    if (start == -1)
+      break;
+
+    value = CGNSINF.substring(idx, start);
+    values[i] = value;
+
+    idx = start + 1;
+    i++;
+  } while (idx < CGNSINF.length());
+
+  // String GNSS_run = values[0];
+  // String GNSS_fix = values[1];
+  // String UTC_date_time = values[2];
+  // String lattitude = values[3];
+  // String lontitude  = values[4];
+  // String MSL_altitude = values[5];
+  // String speed_over_ground = values[6];
+  // String course_over_ground = values[7];
+  // String fix_mode   = values[8];
+  // String reserved1  = values[9];
+  // String HDOP = values[10];
+  // String PDOP = values[11];
+  // String VDOP   = values[12];
+  // String reserved2  = values[13];
+  // String GPS_satelites_in_view = values[14];
+  // String GNSS_satelites_used = values[15];
+  // String GLONASS_satelites_in_view = values[16];
+  // String reserved3  = values[17];
+  // String C_N0_max = values[18];
+  // String HPA_2 = values[19];
+  // String VPA_2 = values[20];
+
+  parse_ok = true;
+  return values;
+}
+
 void setup()
 {
   // led init
@@ -154,7 +251,7 @@ void setup()
   }
 
   // SIM init
-  pinMode(SIM_PWRK, OUTPUT);
+  pinMode(SIM_PWRK, INPUT_PULLUP);
 
   // switches init
   for (int i = 0; i < switchesSize; i++)
@@ -182,6 +279,7 @@ void setup()
   }
 
   display.setTextSize(1);
+  display.setRotation(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
   display.cp437(true);
@@ -225,43 +323,124 @@ void setup()
   display.print("BOOTING...");
   display.display();
   // pressing SIM868 PWRK pin to boot it
-  digitalWrite(SIM_PWRK, HIGH);
-  digitalWrite(LED_PC13, LOW);
-  delay(100);
+  pinMode(SIM_PWRK, OUTPUT);
   digitalWrite(SIM_PWRK, LOW);
   digitalWrite(LED_PC13, HIGH);
-  delay(500);
-  digitalWrite(SIM_PWRK, HIGH);
+  delay(1000);
+  pinMode(SIM_PWRK, INPUT);
   digitalWrite(LED_PC13, LOW);
   delay(2000);
 
-  display.setCursor(xpos, ypos);
-  display.fillRect(xpos, ypos, 128, ypos + 8, SSD1306_BLACK);
-  display.print("CHECKING...");
-  display.display();
+  // ===============================================
+  // ===============================================
+  // SIM868
   MySerial1.write("Checking SIM868 ...\n");
   info_blink(LED_PC13, 1);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  display.setCursor(xpos, ypos);
+  display.print("AT? ...");
+  display.display();
   MySerial3.write("AT\n");
   delay(100);
 
-  c = "FAIL";
+  c = "AT=FAIL";
   while (MySerial3.available() > 0)
   {
     c = MySerial3.readString();
   }
   int ok_ind = c.indexOf("OK");
+  MySerial1.write("ANS: ");
+  MySerial1.println(c);
+
   // c.replace("\r\n", "");
   // c.replace("AT", "");
   if (ok_ind != -1)
   {
-    c = "OK";
+    c = "AT=OK";
   }
 
   MySerial1.println(c);
-  display.fillRect(xpos, ypos, 128, ypos + 8, SSD1306_BLACK);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
   display.setCursor(xpos, ypos);
-  display.println(c);
+  display.print(c);
   display.display();
+
+  // ===============================================
+  // ===============================================
+  // GPS
+  MySerial1.write("Enabling GPS ...\n");
+  info_blink(LED_PC13, 1);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  display.setCursor(xpos, ypos);
+  display.print("PWR? ...");
+  display.display();
+  MySerial3.write("AT+CGNSPWR=1\n");
+  delay(500);
+  c = "PWR=FAIL";
+  while (MySerial3.available() > 0)
+  {
+    c = MySerial3.readString();
+  }
+  MySerial1.write("ANS: ");
+  MySerial1.println(c);
+  ok_ind = c.indexOf("CGNSPWR");
+  if (ok_ind != -1)
+  {
+    c = "PWR=OK";
+  }
+  MySerial1.println(c);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  display.setCursor(xpos, ypos);
+  display.print(c);
+  display.display();
+
+  // ===============================================
+  // ===============================================
+  // GPS version
+  MySerial1.write("Checking GPS version ...\n");
+  info_blink(LED_PC13, 1);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  display.setCursor(xpos, ypos);
+  display.print("VER? ...");
+  display.display();
+  MySerial3.write("AT+CGNSVER\n");
+  delay(500);
+  c = "VER=FAIL";
+  while (MySerial3.available() > 0)
+  {
+    c = MySerial3.readString();
+  }
+  MySerial1.write("ANS: ");
+  MySerial1.println(c);
+  ok_ind = c.indexOf("AXN");
+  if (ok_ind != -1)
+  {
+    c = "VER=OK";
+  }
+  MySerial1.println(c);
+  display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  display.setCursor(xpos, ypos);
+  display.print(c);
+  display.display();
+
+  // ===============================================
+  // ===============================================
+  // Enabling NMEA
+  // MySerial1.write("Enabling NMEA ...\n");
+  // info_blink(LED_PC13, 1);
+  // display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  // display.setCursor(xpos, ypos);
+  // display.print("NMEA? ...");
+  // display.display();
+  // MySerial3.write("AT+CGNSURC=1\n");
+  // delay(100);
+  // c = "NMEA=OK";
+  // MySerial1.println(c);
+  // display.fillRect(xpos, ypos, 128, 8, SSD1306_BLACK);
+  // display.setCursor(xpos, ypos);
+  // display.println(c);
+  // display.display();
+
   info_blink(LED_PC13, 3);
   delay(500);
 
@@ -293,6 +472,7 @@ void setup()
                     Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
                     Adafruit_BMP280::FILTER_X16,      /* Filtering. */
                     Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+    bmpStarted = true;
   }
 
   // ===============================================
@@ -351,6 +531,7 @@ void setup()
   // delay(500);
 
   MySerial1.println("\nALL DONE\n");
+  MySerial3.flush();
 }
 
 void loop()
@@ -358,43 +539,74 @@ void loop()
   info_blink(LED_PC13, 1);
   io_tick();
 
-  if (millis() - bmpTimer > bmp_delay)
+  if ((bmpStarted) && (millis() - bmpTimer > bmp_delay))
   {
     temperature = bmp.readTemperature();
     pressure = bmp.readPressure() / 133.3;
     altitude = bmp.readAltitude(1031);
-
-    MySerial1.print(F("Temperature = "));
-    MySerial1.print(temperature);
-    MySerial1.println(" C");
-
-    MySerial1.print(F("Pressure = "));
-    MySerial1.print(pressure);
-    MySerial1.println(" mmHg");
-
-    MySerial1.print(F("Approx altitude = "));
-    MySerial1.print(altitude);
-    MySerial1.println(" m");
-
-    MySerial1.println();
-
     bmpTimer = millis();
   }
 
-  display.fillRect(0, 40, 128, 64, SSD1306_BLACK);
-  display.setCursor(0, 40);
-  display.print(temperature);
+  // BMP info
+  if (bmpStarted)
+  {
+    display.fillRect(0, 0, 128, 8, SSD1306_BLACK);
+    display.setCursor(0, 0);
+    display.print(temperature);
 
-  display.print(" ");
-  display.print(pressure);
+    display.print(" ");
+    display.print(pressure);
 
-  display.print(" ");
-  display.print(altitude);
+    display.print(" ");
+    display.print(altitude);
+    display.display();
 
-  display.println();
+    // MySerial1.printf("Temperature: %f C, Pressure: %f mmHg, Altitude: %f m\n", temperature, pressure, altitude);
+  }
 
+  // io status
+  display.fillRect(0, 8, 128, 8, SSD1306_BLACK);
+  display.setCursor(0, 8);
   display.println(io_state());
   display.display();
 
-  delay(50);
+  // GPS status
+  if (millis() - gpsTimer > gps_delay)
+  {
+    MySerial3.println("AT+CGNSINF");
+    delay(5);
+    if (MySerial3.available())
+    {
+      String cgnsinf;
+      do
+      {
+        cgnsinf = MySerial3.readStringUntil('\n');
+      } while (cgnsinf.indexOf('+CGNSINF:') == -1);
+
+      // t = MySerial3.readStringUntil('\n');
+      // cgnsinf = MySerial3.readStringUntil('\n');
+      // t = MySerial3.readStringUntil('\n');
+      // t = MySerial3.readStringUntil('\n');
+      MySerial1.println("CGNSINF: " + cgnsinf);
+
+      bool parse_ok = false;
+      std::array<String, 21> parsed_cgnsinf = parse_CGNSINF(cgnsinf, parse_ok);
+      MySerial1.println("parse_ok = " + String(parse_ok));
+
+      if (parse_ok)
+      {
+        std::array<String, 2> date_time = parse_UTS_date_time(parsed_cgnsinf[2]);
+
+        // clear display
+        display.fillRect(0, 16, 128, 64, SSD1306_BLACK);
+        display.setCursor(0, 24);
+        display.printf("RUN: %2d     FIX: %2d\n", parsed_cgnsinf[0].toInt(), parsed_cgnsinf[1].toInt());
+        display.printf("GPS: %2d     GLO: %2d\n", parsed_cgnsinf[14].toInt(), parsed_cgnsinf[16].toInt());
+        display.printf("%s  %s\n", date_time[1].c_str(), date_time[0].c_str());
+        display.printf("LAT: %s \nLON: %s\n", parsed_cgnsinf[3].c_str(), parsed_cgnsinf[4].c_str());
+        display.display();
+      }
+    }
+    gpsTimer = millis();
+  }
 }
